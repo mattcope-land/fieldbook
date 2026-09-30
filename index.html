@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fieldbook</title>
+<meta name="description" content="Simple books for a one-person practice: income, expenses and a profit &amp; loss.">
+<meta name="theme-color" content="#3a2518">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="lid">
+  <div class="lid-inner">
+    <a class="brand" href="#ledger">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true"><use href="#i-case"/></svg>
+      <span class="brand-text">
+        <span class="brand-name">Fieldbook</span>
+        <span class="brand-sub" data-business>My Practice</span>
+      </span>
+    </a>
+    <button class="backup-tag" id="backup-tag" type="button" title="Download a backup to your computer">
+      <span class="backup-dot" aria-hidden="true"></span>
+      <span id="backup-text">Not backed up yet</span>
+    </button>
+  </div>
+  <nav class="tabs" aria-label="Sections">
+    <a href="#ledger" data-tab="ledger">Ledger</a>
+    <a href="#reports" data-tab="reports">Reports</a>
+    <a href="#case" data-tab="case">The Case</a>
+  </nav>
+</header>
+
+<main>
+  <div class="sample-banner" id="sample-banner" hidden>
+    <span>You’re looking at <em>sample</em> entries, so poke around freely.</span>
+    <button type="button" class="link" id="clear-sample">Clear the sample entries</button>
+  </div>
+
+  <!-- ─────────────── LEDGER ─────────────── -->
+  <section class="view" id="view-ledger" aria-labelledby="h-ledger">
+    <h1 class="visually-hidden" id="h-ledger">Ledger</h1>
+
+    <div class="specimens" id="summary"></div>
+
+    <form class="entry card" id="entry-form" autocomplete="off">
+      <div class="entry-head">
+        <h2>New entry</h2>
+        <div class="kind" role="radiogroup" aria-label="Kind of entry">
+          <label><input type="radio" name="type" value="income" checked><span>Money in</span></label>
+          <label><input type="radio" name="type" value="expense"><span>Money out</span></label>
+        </div>
+      </div>
+      <div class="entry-fields">
+        <label class="f f-date"><span>Date</span><input type="date" name="date" required></label>
+        <label class="f f-amount"><span>Amount</span>
+          <span class="money"><span aria-hidden="true">$</span><input name="amount" inputmode="decimal" placeholder="0.00" required></span>
+        </label>
+        <label class="f f-party"><span data-party-label>Client</span><input name="party" list="parties"></label>
+        <label class="f f-desc"><span>Description</span><input name="description" list="descriptions" placeholder="What was it for?"></label>
+        <label class="f f-cat"><span>Category</span><select name="category"></select></label>
+        <button class="btn btn-primary f-add" type="submit">Add</button>
+      </div>
+      <p class="form-error" id="entry-error" role="alert"></p>
+    </form>
+
+    <div class="ledger-tools">
+      <label class="search"><span class="visually-hidden">Search</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-lens"/></svg>
+        <input type="search" id="q" placeholder="Search entries">
+      </label>
+      <label><span class="visually-hidden">Year</span><select id="f-year"></select></label>
+      <label><span class="visually-hidden">Kind</span>
+        <select id="f-type">
+          <option value="">In &amp; out</option>
+          <option value="income">Money in</option>
+          <option value="expense">Money out</option>
+        </select>
+      </label>
+      <label><span class="visually-hidden">Category</span><select id="f-cat"></select></label>
+    </div>
+
+    <div id="ledger"></div>
+  </section>
+
+  <!-- ─────────────── REPORTS ─────────────── -->
+  <section class="view" id="view-reports" aria-labelledby="h-reports" hidden>
+    <h1 class="visually-hidden" id="h-reports">Reports</h1>
+
+    <div class="report-tools">
+      <label><span>Year</span><select id="r-year"></select></label>
+      <label><span>Period</span>
+        <select id="r-span">
+          <option value="year">Whole year</option>
+          <option value="ytd">Year to date</option>
+          <optgroup label="Quarter">
+            <option value="q1">Q1 · Jan–Mar</option>
+            <option value="q2">Q2 · Apr–Jun</option>
+            <option value="q3">Q3 · Jul–Sep</option>
+            <option value="q4">Q4 · Oct–Dec</option>
+          </optgroup>
+          <optgroup label="Month" id="r-months"></optgroup>
+          <option value="custom">Custom dates…</option>
+        </select>
+      </label>
+      <span class="custom-range" id="r-custom" hidden>
+        <label><span>From</span><input type="date" id="r-from"></label>
+        <label><span>To</span><input type="date" id="r-to"></label>
+      </span>
+      <span class="spacer"></span>
+      <button class="btn" type="button" id="print-pnl">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-print"/></svg>Print</button>
+      <button class="btn" type="button" id="export-pnl">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg>Excel</button>
+    </div>
+
+    <article class="statement card" id="pnl"></article>
+
+    <div class="report-grid">
+      <section class="card" aria-labelledby="h-months">
+        <div class="card-head">
+          <h2 id="h-months">Month by month</h2>
+          <button class="link" type="button" id="toggle-month-table" aria-pressed="false">Show as table</button>
+        </div>
+        <div id="months"></div>
+      </section>
+      <section class="card" aria-labelledby="h-clients">
+        <div class="card-head"><h2 id="h-clients">Income by client</h2></div>
+        <div id="clients"></div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ─────────────── THE CASE (settings) ─────────────── -->
+  <section class="view" id="view-case" aria-labelledby="h-case" hidden>
+    <h1 class="visually-hidden" id="h-case">The Case</h1>
+
+    <section class="card" aria-labelledby="h-backup">
+      <div class="card-head"><h2 id="h-backup">Backups</h2></div>
+      <p class="prose">Your books live in this browser, on this computer. Clearing browser data erases them,
+        so download a backup now and then. It’s an ordinary Excel file you can open, keep in a folder
+        or email to your accountant, and restore from here.</p>
+      <p class="backup-status" id="backup-status"></p>
+      <div class="actions">
+        <button class="btn btn-primary" type="button" id="download-backup">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-down"/></svg>Download backup</button>
+        <label class="btn" tabindex="0">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-up"/></svg>Restore or import…
+          <input type="file" id="import-file" accept=".xlsx,.xls,.csv,.ods" hidden>
+        </label>
+      </div>
+      <p class="hint">Import works with a Fieldbook backup or your own spreadsheet. Fieldbook looks for columns like
+        <em>Date</em>, <em>Amount</em>, <em>Description</em>, <em>Category</em> and <em>Client</em>, and shows you what it found before
+        changing anything.</p>
+    </section>
+
+    <section class="card" aria-labelledby="h-practice">
+      <div class="card-head"><h2 id="h-practice">Your practice</h2></div>
+      <label class="f f-wide"><span>Name shown on reports</span><input id="business" placeholder="My Practice"></label>
+    </section>
+
+    <section class="card" aria-labelledby="h-cats">
+      <div class="card-head"><h2 id="h-cats">Categories</h2></div>
+      <p class="prose">These become the lines of your profit &amp; loss. Rename one and every entry under it follows.</p>
+      <div class="cat-columns">
+        <div><h3>Money in</h3><ul class="cats" id="cats-income"></ul>
+          <form class="cat-add" data-type="income"><input placeholder="New category" aria-label="New income category"><button class="btn btn-small">Add</button></form></div>
+        <div><h3>Money out</h3><ul class="cats" id="cats-expense"></ul>
+          <form class="cat-add" data-type="expense"><input placeholder="New category" aria-label="New expense category"><button class="btn btn-small">Add</button></form></div>
+      </div>
+    </section>
+
+    <section class="card card-quiet" aria-labelledby="h-start">
+      <div class="card-head"><h2 id="h-start">Start over</h2></div>
+      <p class="prose">Erase every entry and category from this browser. Download a backup first if you might want them back.</p>
+      <div class="actions"><button class="btn btn-danger" type="button" id="erase-all">Erase everything…</button></div>
+    </section>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>Kept in this browser only · no accounts, no servers</span>
+</footer>
+
+<!-- Edit dialog -->
+<dialog id="edit-dialog" class="dialog">
+  <form method="dialog" id="edit-form" autocomplete="off">
+    <h2>Edit entry</h2>
+    <div class="kind" role="radiogroup" aria-label="Kind of entry">
+      <label><input type="radio" name="type" value="income"><span>Money in</span></label>
+      <label><input type="radio" name="type" value="expense"><span>Money out</span></label>
+    </div>
+    <div class="dialog-fields">
+      <label class="f"><span>Date</span><input type="date" name="date" required></label>
+      <label class="f"><span>Amount</span><span class="money"><span aria-hidden="true">$</span><input name="amount" inputmode="decimal" required></span></label>
+      <label class="f"><span data-party-label>Client</span><input name="party" list="parties"></label>
+      <label class="f"><span>Category</span><select name="category"></select></label>
+      <label class="f f-wide"><span>Description</span><input name="description" list="descriptions"></label>
+    </div>
+    <p class="form-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button class="btn btn-danger-quiet" value="delete" type="submit" formnovalidate>Delete</button>
+      <span class="spacer"></span>
+      <button class="btn" value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button class="btn btn-primary" value="save" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Confirm / import dialog -->
+<dialog id="ask-dialog" class="dialog">
+  <form method="dialog">
+    <h2 data-title></h2>
+    <div class="prose" data-body></div>
+    <div class="dialog-actions" data-actions></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="tooltip" id="tooltip" hidden></div>
+
+<datalist id="parties"></datalist>
+<datalist id="descriptions"></datalist>
+
+<!-- Icons & ornaments -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-case" viewBox="0 0 40 40">
+    <rect x="4" y="12" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M15 12V8.5A1.5 1.5 0 0 1 16.5 7h7A1.5 1.5 0 0 1 25 8.5V12" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M4 20h32" stroke="currentColor" stroke-width="1.4"/>
+    <rect x="17" y="17.5" width="6" height="5" rx="1" fill="currentColor"/>
+    <circle cx="8" cy="30" r="1.2" fill="currentColor"/><circle cx="32" cy="30" r="1.2" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-lens" viewBox="0 0 24 24">
+    <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <path d="M14.5 14.5 20 20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-down" viewBox="0 0 24 24">
+    <path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-up" viewBox="0 0 24 24">
+    <path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-print" viewBox="0 0 24 24">
+    <path d="M7 9V4h10v5M7 17H5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2M7 14h10v6H7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-jar" viewBox="0 0 120 140">
+    <path d="M38 22h44v10H38z" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M42 32c0 8-14 12-14 26v58a10 10 0 0 0 10 10h44a10 10 0 0 0 10-10V58c0-14-14-18-14-26" fill="none" stroke="currentColor" stroke-width="2"/>
+    <path d="M36 72h48v30H36z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 3"/>
+    <path d="M60 118c0-14 0-26 2-40m0 0c8-4 14-2 18 2-6 4-12 4-18-2zm-1 14c-8-5-15-3-19 1 6 4 13 4 19-1zm1 12c7-3 12-1 15 2-5 3-10 3-15-2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="48" cy="50" r="2" fill="currentColor" opacity=".5"/><circle cx="74" cy="58" r="1.5" fill="currentColor" opacity=".5"/><circle cx="66" cy="44" r="1" fill="currentColor" opacity=".5"/>
+  </symbol>
+  <symbol id="i-sprig" viewBox="0 0 80 20">
+    <path d="M2 10h76" stroke="currentColor" stroke-width="1"/>
+    <path d="M40 10c-6-7-14-7-18-4 5 5 12 6 18 4zm0 0c6-7 14-7 18-4-5 5-12 6-18 4zm-14 0c-3 5-8 6-11 5 2-4 6-6 11-5zm28 0c3 5 8 6 11 5-2-4-6-6-11-5z" fill="none" stroke="currentColor" stroke-width="1"/>
+    <circle cx="40" cy="10" r="2" fill="currentColor"/>
+  </symbol>
+</svg>
+
+<script src="vendor/xlsx.full.min.js" defer></script>
+<script src="app.js" defer></script>
+</body>
+</html>
