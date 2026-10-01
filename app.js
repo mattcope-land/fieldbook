@@ -211,14 +211,15 @@ function usage(type, category) {
 
 /* ───────────────────────── Routing ───────────────────────── */
 
-const views = ['ledger', 'reports', 'case'];
+const views = ['ledger', 'reports', 'settings'];
 let view = 'ledger';
 
 function route() {
-    const next = location.hash.slice(1);
+    const hash = location.hash.slice(1);
+    const next = hash === 'case' ? 'settings' : hash; // old name for Settings
     view = views.includes(next) ? next : 'ledger';
     for (const v of views) $(`#view-${v}`).hidden = v !== view;
-    for (const a of $$('.tabs a')) a.dataset.tab === view ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current');
+    for (const a of $$('[data-tab]')) a.dataset.tab === view ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current');
     render();
     scrollTo({ top: 0 });
 }
@@ -228,7 +229,7 @@ function render() {
     renderChrome();
     if (view === 'ledger') renderLedger();
     if (view === 'reports') renderReports();
-    if (view === 'case') renderCase();
+    if (view === 'settings') renderSettings();
 }
 
 function renderChrome() {
@@ -424,7 +425,7 @@ function readForm(form) {
     const cents = parseMoney(f.amount.value);
     if (!validISO(f.date.value)) return { error: 'Please choose a date.', focus: f.date };
     if (!(Math.abs(cents) > 0)) return { error: 'Please enter an amount, like 1250 or 1,250.00.', focus: f.amount };
-    if (!f.category.value) return { error: 'Please choose a category (add one in The Case).', focus: f.category };
+    if (!f.category.value) return { error: 'Please choose a category (add one in Settings).', focus: f.category };
     return {
         entry: {
             date: f.date.value,
@@ -804,7 +805,7 @@ function downloadBackup() {
         ['Saved', stamp.toISOString()],
         ['Entries', books.entries.length],
         [],
-        ['To restore: open Fieldbook, go to The Case, choose “Restore or import…” and pick this file.'],
+        ['To restore: in Fieldbook, open Settings (the gear at the top right), choose “Restore or import…” and pick this file.'],
         ['Keep backups somewhere safe, like a cloud folder. Each one is a complete copy of your books.']
     ], { widths: [14, 60] }), 'About');
     XLSX.writeFile(wb, `Fieldbook backup ${isoOf(stamp)}.xlsx`);
@@ -1045,9 +1046,9 @@ $('label.btn:has(#import-file)')?.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#import-file').click(); }
 });
 
-/* ───────────────────────── The Case ───────────────────────── */
+/* ───────────────────────── Settings ───────────────────────── */
 
-function renderCase() {
+function renderSettings() {
     const biz = $('#business');
     if (document.activeElement !== biz) biz.value = books.business;
 
@@ -1077,7 +1078,7 @@ $('#business').addEventListener('input', e => {
     bizTimer = setTimeout(() => { books.changesSinceBackup++; save(); renderChrome(); }, 500);
 });
 
-$('#view-case').addEventListener('change', e => {
+$('#view-settings').addEventListener('change', e => {
     const input = e.target.closest('.cats input');
     if (!input) return;
     const { type } = input.dataset;
@@ -1096,11 +1097,11 @@ $('#view-case').addEventListener('change', e => {
     });
 });
 
-$('#view-case').addEventListener('keydown', e => {
+$('#view-settings').addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target.closest('.cats input')) e.target.blur();
 });
 
-$('#view-case').addEventListener('click', e => {
+$('#view-settings').addEventListener('click', e => {
     const x = e.target.closest('.cats .x');
     if (!x) return;
     const { type } = x.dataset;

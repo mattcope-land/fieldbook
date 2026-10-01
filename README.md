@@ -9,7 +9,7 @@ accounting software.
 - **Reports**: profit & loss for a year, year to date, a quarter, a month or any dates you
   choose. It prints cleanly and exports to Excel. You also get month-by-month totals and
   income by client.
-- **The Case**: backups, categories (which become the P&L lines) and your practice name.
+- **Settings** (the gear at the top right): backups, categories (which become the P&L lines) and your practice name.
 - **Undo** after every change, sample entries to try it out, light and dark themes, and it
   works offline.
 

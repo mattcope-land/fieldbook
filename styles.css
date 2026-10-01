@@ -1,4 +1,4 @@
-/* Fieldbook — a naturalist's case: parchment pages, walnut & leather, brass fittings. */
+/* Fieldbook — a leather-bound field journal: parchment pages, walnut & leather, brass fittings. */
 
 :root {
   --paper: #f3ead6;
@@ -101,6 +101,16 @@ em { font-style: italic; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.05; min-width: 0; }
 .brand-name { font-family: var(--display); font-size: 1.9rem; color: #f3e6c6; text-shadow: 0 1px 0 #000a; }
 .brand-sub { font-family: var(--caps); font-size: .95rem; color: var(--brass-light); letter-spacing: .06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.lid-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+.gear {
+  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  color: var(--brass-light); border: 1px solid transparent; transition: background .15s, color .15s;
+}
+.gear svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 0 #0008); transition: transform .4s; }
+.gear:hover { background: #ffffff14; color: #f3e6c6; }
+.gear:hover svg { transform: rotate(45deg); }
+.gear[aria-current="page"] { background: #ffffff1c; border-color: #b8913a88; color: #f3e6c6; }
 
 .backup-tag {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
@@ -356,7 +366,7 @@ input::placeholder { color: var(--ink-3); font-style: italic; opacity: 1; }
 .share-bar { display: block; height: 3px; border-radius: 2px; background: var(--in); opacity: .55; margin-top: 4px; }
 .muted { color: var(--ink-3); font-style: italic; }
 
-/* ─── The Case ─── */
+/* ─── Settings ─── */
 .backup-status { font-family: var(--type); font-size: .9rem; color: var(--ink-2); margin: 0 0 14px; padding: 8px 12px; border-left: 3px solid var(--brass); background: var(--paper); }
 .backup-status.stale { border-left-color: var(--danger); }
 .cat-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
@@ -413,6 +423,13 @@ input::placeholder { color: var(--ink-3); font-style: italic; opacity: 1; }
   .brand-name { font-size: 1.5rem; }
   .brand-mark { width: 32px; height: 32px; }
   .backup-tag { font-size: .7rem; padding: 6px 10px; }
+  /* Brand and gear on top; tabs and the backup tag share the second row */
+  .lid { display: grid; grid-template-columns: 1fr auto; align-items: center; }
+  .lid-inner, .lid-actions { display: contents; }
+  .brand { grid-area: 1 / 1; padding: 14px 0 4px 16px; }
+  .gear { grid-area: 1 / 2; justify-self: end; margin: 10px 12px 0 0; }
+  .tabs { grid-area: 2 / 1; margin: 0; }
+  .backup-tag { grid-area: 2 / 2; margin: 2px 12px 0 0; }
   .specimens { grid-template-columns: 1fr 1fr; gap: 10px; }
   .specimen[data-kind="net"] { grid-column: 1 / -1; }
   .specimen-value { font-size: 1.55rem; }
@@ -434,7 +451,7 @@ input::placeholder { color: var(--ink-3); font-style: italic; opacity: 1; }
   @page { margin: 18mm; }
   :root { --ink: #000; --ink-2: #222; --ink-3: #555; --rule: #bbb; --rule-strong: #777; --card: #fff; --paper: #fff; --danger: #000; }
   body { background: #fff; font-size: 12pt; }
-  .lid, .foot, .report-tools, .report-grid, .sample-banner, .toast, .tooltip, #view-ledger, #view-case { display: none !important; }
+  .lid, .foot, .report-tools, .report-grid, .sample-banner, .toast, .tooltip, #view-ledger, #view-settings { display: none !important; }
   #view-reports { display: block !important; }
   main { padding: 0; max-width: none; }
   .statement { border: 0; box-shadow: none; padding: 0; background: none; }
