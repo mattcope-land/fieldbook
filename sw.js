@@ -1,7 +1,7 @@
 // Serves from cache first so the app opens offline, then refreshes the cache
 // in the background. After a deploy, the new version shows on the next open.
 // Bump CACHE when the list of app files changes.
-const CACHE = 'fieldbook-v2';
+const CACHE = 'fieldbook-v3';
 const APP_FILES = [
     './',
     'styles.css',

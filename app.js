@@ -5,7 +5,7 @@
 // Backups are ordinary .xlsx files (SheetJS, vendored), and import reads them back.
 
 const KEY = 'fieldbook';
-const VERSION = 1;
+const VERSION = 2;
 
 const DEFAULT_CATEGORIES = {
     income: ['Consulting fees', 'Expense reimbursements', 'Other income'],
@@ -21,6 +21,8 @@ const DEFAULT_CATEGORIES = {
         'Travel',
         'Meals',
         'Contract help',
+        'Payroll',
+        'Payroll taxes',
         'Bank & payment fees',
         'Marketing & website',
         'Other expenses'
@@ -132,6 +134,14 @@ function normalize(raw) {
     };
     books.entries = (Array.isArray(raw.entries) ? raw.entries : []).filter(validEntry)
         .map(e => ({ party: '', description: '', ...e }));
+    // Version 2 added payroll to the defaults; give existing books them once, after Contract help
+    if ((raw.version ?? 1) < 2) {
+        const list = books.categories.expense;
+        const missing = ['Payroll', 'Payroll taxes'].filter(c => !list.includes(c));
+        const at = list.includes('Contract help') ? list.indexOf('Contract help') + 1 : list.length;
+        list.splice(at, 0, ...missing);
+    }
+    books.version = VERSION;
     return books;
 }
 
