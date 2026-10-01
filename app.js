@@ -51,15 +51,17 @@ const moneyShort = cents => {
 // Accounting style for statements: losses in parentheses.
 const acct = cents => cents < 0 ? `(${money(-cents)})` : money(cents);
 
-// "$1,234.50", "1234.5", "(12.00)", "-12", 12.5 → cents (signed), or NaN
+// "$1,234.50", "1234.5", "(12.00)", "-12", 12.5 → cents (signed), or NaN.
+// Anything else ("1e3", "12abc", "2,50") is NaN rather than a guess.
 function parseMoney(value) {
-    if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value * 100) : NaN;
+    const toCents = n => Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-6);
+    if (typeof value === 'number') return Number.isFinite(value) ? toCents(value) : NaN;
     let s = String(value ?? '').trim();
     if (!s) return NaN;
-    const negative = /^\(.*\)$/.test(s) || /^-|-$|^\$\s*-/.test(s);
-    s = s.replace(/[^0-9.]/g, '');
-    if (!s || (s.match(/\./g) || []).length > 1) return NaN;
-    const cents = Math.round(parseFloat(s) * 100 + 1e-6);
+    const negative = /^\(.*\)$/.test(s) || /^[-−]|[-−]$|^\$\s*[-−]/.test(s);
+    s = s.replace(/usd|[$\s()+\-−]/gi, '');
+    if (!/^(\d{1,3}(,\d{3})+|\d*)(\.\d*)?$/.test(s) || !/\d/.test(s)) return NaN;
+    const cents = toCents(parseFloat(s.replace(/,/g, '')));
     return negative ? -cents : cents;
 }
 
@@ -76,7 +78,7 @@ const lastDay = (y, m) => new Date(y, m, 0).getDate();
 // Excel serial day numbers ↔ ISO dates (done in UTC so time zones can't shift a day)
 const EXCEL_EPOCH = Date.UTC(1899, 11, 30);
 const toSerial = iso => (Date.UTC(yearOf(iso), monthOf(iso) - 1, +iso.slice(8, 10)) - EXCEL_EPOCH) / 86400000;
-const fromSerial = n => new Date(EXCEL_EPOCH + Math.round(n) * 86400000).toISOString().slice(0, 10);
+const fromSerial = n => new Date(EXCEL_EPOCH + Math.floor(n) * 86400000).toISOString().slice(0, 10);
 
 function parseDate(value) {
     if (value instanceof Date && !isNaN(value)) return isoOf(value);
@@ -180,7 +182,8 @@ function change(message, fn, { counts = 1, undo = true } = {}) {
     books.changesSinceBackup += counts;
     save();
     render();
-    if (message) toast(message, undo ? { action: ['Undo', () => { books = normalize(JSON.parse(before)); save(); render(); toast('Undone.'); }] } : {});
+    // Don't cover up save()'s warning that the change wasn't kept
+    if (message && !saveFailed) toast(message, undo ? { action: ['Undo', () => { books = normalize(JSON.parse(before)); save(); render(); toast('Undone.'); }] } : {});
     return result;
 }
 
@@ -404,7 +407,7 @@ function rowHTML(e) {
     const main = e.description || e.party || e.category;
     const sub = e.description ? e.party : '';
     return `
-        <li class="row" tabindex="0" data-id="${e.id}" aria-label="${esc(`${prettyDate(e.date)}, ${main}, ${e.type === 'income' ? 'money in' : 'money out'} ${money(e.amount)}`)}">
+        <li class="row" tabindex="0" data-id="${esc(e.id)}" aria-label="${esc(`${prettyDate(e.date)}, ${main}, ${e.type === 'income' ? 'money in' : 'money out'} ${money(e.amount)}`)}">
             <div class="row-day"><b>${+e.date.slice(8, 10)}</b>${MON[monthOf(e.date) - 1]}</div>
             <div class="row-main"><div class="row-desc">${esc(main)}</div>${sub ? `<div class="row-party">${esc(sub)}</div>` : ''}</div>
             <span class="tag" title="${esc(e.category)}">${esc(e.category)}</span>
@@ -521,6 +524,14 @@ function openEdit(id) {
     $('.form-error', editForm).textContent = '';
     editDialog.showModal();
 }
+
+// Enter would otherwise press the first submit button in the dialog, which is Delete
+editForm.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && e.target.matches('input')) {
+        e.preventDefault();
+        editForm.requestSubmit($('button[value="save"]', editForm));
+    }
+});
 
 editForm.addEventListener('change', e => {
     if (e.target.name === 'type') syncFormType(editForm, editing?.type === editForm.elements.type.value ? editing.category : null);
@@ -801,6 +812,7 @@ function yearlyRows() {
 }
 
 function downloadBackup() {
+    saveBusiness(); // count a pending name edit now, so the backup clears it
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, entrySheet(books.entries), 'Entries');
     const { rows, cols } = yearlyRows();
@@ -837,17 +849,21 @@ const HEADERS = [
     ['category', /categ|^account$|^class$|^group$|^bucket$|^line item$|^(expense|income) type$/],
     ['party', /client|customer|payee|payer|vendor|merchant|supplier|company|^who$|^name$|paid to|received from|from\s*\/\s*to/],
     ['description', /desc|memo|detail|^item|note|particular|purpose|^what|narrative|^reference|^for$/],
-    ['amount', /amount|^amt|^total$|^value$|^sum$|^\$$|^usd$|^net$/],
-    ['income', /income|received|revenue|deposit|credit|money in|^in$|^fees?$|receipts/],
-    ['expense', /expense|expenditure|spent|spend|debit|payment|^paid$|cost|money out|^out$|withdrawal/]
+    // Income and expense come before amount so "Debit amount" / "Credit amount" land in the right column
+    ['income', /income|received|revenue|deposit|credit|money in|\bin$|^fees?$|receipts/],
+    ['expense', /expense|expenditure|spent|spend|debit|payment|^paid$|cost|money out|\bout$|withdrawal/],
+    ['amount', /amount|^amt|^total$|^value$|^sum$|^\$$|^usd$|^net$/]
 ];
+const MONEY_KEYS = ['income', 'expense', 'amount'];
+// Headers like "Payment method" or "Cost center" describe money but don't hold it
+const NOT_MONEY = /\b(method|type|status|account|categor\w*|date|id|no|number|ref\w*|code|cent(er|re))\b/;
 
 function mapHeader(row) {
     const map = {};
     row.forEach((cell, i) => {
         const h = String(cell ?? '').trim().toLowerCase();
         if (!h) return;
-        const hit = HEADERS.find(([key, re]) => !(key in map) && re.test(h));
+        const hit = HEADERS.find(([key, re]) => !(key in map) && re.test(h) && !(MONEY_KEYS.includes(key) && NOT_MONEY.test(h)));
         if (hit) map[hit[0]] = i;
     });
     return map;
@@ -869,10 +885,13 @@ function findTable(wb) {
     return best;
 }
 
+// Whole words only, so "Marketing" isn't "in" and "Payment received" isn't "payment".
+// Income is checked first so "Expense reimbursement" counts as money in. Anything
+// unrecognized returns null and the amount's sign and category decide instead.
 function typeFromText(s) {
     s = String(s ?? '').toLowerCase();
-    if (/out|exp|debit|cost|spen|paid|payment|purchase|withdraw/.test(s)) return 'expense';
-    if (/in|inc|rev|credit|deposit|receiv|fee|sale|invoice/.test(s)) return 'income';
+    if (/\b(in|income|revenue|credit|deposit|received|receipts?|reimburse\w*|sales?|invoice)\b/.test(s)) return 'income';
+    if (/\b(out|expenses?|expenditures?|debit|costs?|spent|purchases?|withdrawals?)\b/.test(s)) return 'expense';
     return null;
 }
 
@@ -1011,8 +1030,15 @@ async function restoreBackup(entries, backup, fileName) {
 }
 
 async function importEntries(entries, { skipped, guessed, sheetName, fileName }) {
-    const existing = new Set(books.entries.map(dupKey));
-    const fresh = entries.filter(e => !existing.has(dupKey(e)));
+    // Each entry already in the books matches one row, so re-importing a file adds nothing
+    // but two identical rows (two $18 lunches on one day) still both come in
+    const existing = new Map();
+    for (const e of books.entries) existing.set(dupKey(e), (existing.get(dupKey(e)) || 0) + 1);
+    const fresh = entries.filter(e => {
+        const k = dupKey(e), n = existing.get(k) || 0;
+        if (n) existing.set(k, n - 1);
+        return !n;
+    });
     const dupes = entries.length - fresh.length;
     const newCats = type => [...new Set(fresh.filter(e => e.type === type).map(e => e.category))].filter(c => !books.categories[type].includes(c));
     const added = [...newCats('income'), ...newCats('expense')];
@@ -1028,7 +1054,7 @@ async function importEntries(entries, { skipped, guessed, sheetName, fileName })
             <table class="table" style="margin:12px 0">${sampleRows}</table>
             ${dupes ? `<p>${plural(dupes, 'row')} already in your books will be left out.</p>` : ''}
             ${skipped ? `<p>${plural(skipped, 'row')} without a date or amount (like totals or notes) will be left out.</p>` : ''}
-            ${guessed ? `<p class="warn">There’s no Type column, so ${plural(guessed, 'positive amount')} will count as money in and negative ones as money out. If that’s wrong, cancel, add a Type column (“in” or “out”), and import again.</p>` : ''}
+            ${guessed ? `<p class="warn">${plural(guessed, 'row')} with a positive amount ${guessed === 1 ? 'has' : 'have'} no type Fieldbook recognizes, so ${guessed === 1 ? 'it' : 'they'} will count as money in (negative amounts count as money out). If that’s wrong, cancel, add a Type column (“in” or “out”), and import again.</p>` : ''}
             ${added.length ? `<p>New categories will be added: ${added.map(esc).join(', ')}.</p>` : ''}
             <p class="muted">You can undo this right after.</p>`,
         actions: [['Cancel', 'cancel'], [`Add ${plural(fresh.length, 'entry', 'entries')}`, 'add', 'btn-primary']]
@@ -1039,7 +1065,7 @@ async function importEntries(entries, { skipped, guessed, sheetName, fileName })
     change(`Added ${plural(fresh.length, 'entry', 'entries')} from “${fileName}”.`, () => {
         if (hadSample) books.entries = books.entries.filter(e => !e.sample);
         const ids = new Set(books.entries.map(e => e.id));
-        for (const e of fresh) { if (ids.has(e.id)) e.id = uid(); books.entries.push(e); }
+        for (const e of fresh) { if (ids.has(e.id)) e.id = uid(); ids.add(e.id); books.entries.push(e); }
         for (const type of ['income', 'expense']) books.categories[type].push(...newCats(type));
     }, { counts: fresh.length });
     filters.year = 'all';
@@ -1080,13 +1106,23 @@ function renderSettings() {
     }
 }
 
-let bizTimer;
+let bizTimer = null;
+function saveBusiness() {
+    if (!bizTimer) return;
+    clearTimeout(bizTimer);
+    bizTimer = null;
+    books.changesSinceBackup++;
+    save();
+    renderChrome();
+}
 $('#business').addEventListener('input', e => {
     books.business = e.target.value;
     renderChrome();
     clearTimeout(bizTimer);
-    bizTimer = setTimeout(() => { books.changesSinceBackup++; save(); renderChrome(); }, 500);
+    bizTimer = setTimeout(saveBusiness, 500);
 });
+// Don't lose the last few keystrokes if the tab closes mid-pause
+addEventListener('pagehide', saveBusiness);
 
 $('#view-settings').addEventListener('change', e => {
     const input = e.target.closest('.cats input');
