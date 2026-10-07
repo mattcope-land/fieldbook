@@ -51,15 +51,20 @@ const moneyShort = cents => {
 // Accounting style for statements: losses in parentheses.
 const acct = cents => cents < 0 ? `(${money(-cents)})` : money(cents);
 
-// "$1,234.50", "1234.5", "(12.00)", "-12", 12.5 → cents (signed), or NaN.
-// Anything else ("1e3", "12abc", "2,50") is NaN rather than a guess.
+// "$1,234.50", "1234.5", "(12.00)", "-12", "USD -12", "$(12)", "12.00 DR", 12.5 → cents
+// (signed), or NaN. DR (debit) is money out, CR (credit) money in. Anything else ("1e3",
+// "12abc", "2,50", "12 34") is NaN rather than a guess.
 function parseMoney(value) {
     const toCents = n => Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-6);
     if (typeof value === 'number') return Number.isFinite(value) ? toCents(value) : NaN;
-    let s = String(value ?? '').trim();
-    if (!s) return NaN;
-    const negative = /^\(.*\)$/.test(s) || /^[-−]|[-−]$|^\$\s*[-−]/.test(s);
-    s = s.replace(/usd|[$\s()+\-−]/gi, '');
+    // Peel off the currency, a CR/DR suffix, then one sign; what's left must be a plain number
+    let s = String(value ?? '').replace(/usd|\$/gi, '').trim();
+    let negative = false;
+    const crdr = s.match(/^(.*?)\s*(cr|dr)\.?$/i);
+    if (crdr) { s = crdr[1]; negative = crdr[2].toLowerCase() === 'dr'; }
+    const sign = s.match(/^\((.*)\)$/) || s.match(/^[-−]\s*(.*)$/) || s.match(/^(.*?)\s*[-−]$/);
+    if (sign) { s = sign[1].trim(); negative = !negative; }
+    s = s.replace(/^\+\s*/, '');
     if (!/^(\d{1,3}(,\d{3})+|\d*)(\.\d*)?$/.test(s) || !/\d/.test(s)) return NaN;
     const cents = toCents(parseFloat(s.replace(/,/g, '')));
     return negative ? -cents : cents;
@@ -89,6 +94,8 @@ function parseDate(value) {
     if (m) return checked(+m[1], +m[2], +m[3]);
     m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/); // US month/day/year
     if (m) return checked(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[1], +m[2]);
+    // Leave the rest ("Jan 5, 2024") to the browser, but not bare numbers: "2024" isn't a day
+    if (!/[a-z]/i.test(s)) return null;
     const t = Date.parse(s);
     return isNaN(t) ? null : isoOf(new Date(t));
 
@@ -99,11 +106,12 @@ function parseDate(value) {
 }
 
 function ago(iso) {
-    const days = Math.round((Date.parse(today()) - Date.parse(iso.slice(0, 10))) / 86400000);
+    const day = iso.length > 10 ? isoOf(new Date(iso)) : iso; // timestamps are UTC; count local days
+    const days = Math.round((Date.parse(today()) - Date.parse(day)) / 86400000);
     if (days <= 0) return 'today';
     if (days === 1) return 'yesterday';
     if (days < 14) return `${days} days ago`;
-    return 'on ' + prettyDate(iso.slice(0, 10)).replace(/, \d{4}$/, m => yearOf(iso) === new Date().getFullYear() ? '' : m);
+    return 'on ' + prettyDate(day).replace(/, \d{4}$/, m => yearOf(day) === new Date().getFullYear() ? '' : m);
 }
 const daysSince = iso => (Date.now() - Date.parse(iso)) / 86400000;
 
@@ -130,12 +138,17 @@ function validEntry(e) {
 
 function normalize(raw) {
     const books = { ...freshBooks(), ...raw };
+    const str = v => typeof v === 'string' ? v : '';
+    const names = list => Array.isArray(list) ? list.filter(c => typeof c === 'string' && c.trim()) : null;
+    books.business = str(raw.business);
+    books.lastBackupAt = typeof raw.lastBackupAt === 'string' && !isNaN(Date.parse(raw.lastBackupAt)) ? raw.lastBackupAt : null;
+    books.changesSinceBackup = Number.isInteger(raw.changesSinceBackup) && raw.changesSinceBackup > 0 ? raw.changesSinceBackup : 0;
     books.categories = {
-        income: Array.isArray(raw.categories?.income) ? raw.categories.income : [...DEFAULT_CATEGORIES.income],
-        expense: Array.isArray(raw.categories?.expense) ? raw.categories.expense : [...DEFAULT_CATEGORIES.expense]
+        income: names(raw.categories?.income) ?? [...DEFAULT_CATEGORIES.income],
+        expense: names(raw.categories?.expense) ?? [...DEFAULT_CATEGORIES.expense]
     };
     books.entries = (Array.isArray(raw.entries) ? raw.entries : []).filter(validEntry)
-        .map(e => ({ party: '', description: '', ...e }));
+        .map(e => ({ ...e, party: str(e.party), description: str(e.description) }));
     // Version 2 added payroll to the defaults; give existing books them once, after Contract help
     if ((raw.version ?? 1) < 2) {
         const list = books.categories.expense;
@@ -157,6 +170,9 @@ function load() {
         // Never overwrite something we can't read: set it aside so it can be recovered.
         console.error('Fieldbook: saved data could not be read', err);
         try { localStorage.setItem(`${KEY}.unreadable.${Date.now()}`, raw); } catch { /* nothing more to do */ }
+        // Otherwise the books just look empty. Deferred so the toast exists when this runs at startup.
+        setTimeout(() => toast('Fieldbook couldn’t read the books saved in this browser, so it set them aside and started empty. Restore your latest backup to carry on.',
+            { action: ['Open Settings', () => { location.hash = '#settings'; }], sticky: true }));
         return freshBooks();
     }
 }
@@ -237,6 +253,8 @@ function route() {
     scrollTo({ top: 0 });
 }
 addEventListener('hashchange', route);
+// Printing always prints the statement (see the print styles), so make sure it's drawn and current
+addEventListener('beforeprint', () => { if (view !== 'reports') renderReports(); });
 
 function render() {
     renderChrome();
@@ -548,7 +566,9 @@ editForm.addEventListener('submit', e => {
         }
         const id = editing.id;
         const same = Object.keys(entry).every(k => entry[k] === editing[k]);
-        if (!same) change('Entry saved.', () => {
+        // Another tab may have deleted it while the dialog was open
+        if (!books.entries.some(x => x.id === id)) toast('That entry was deleted in another window, so the edit wasn’t saved.');
+        else if (!same) change('Entry saved.', () => {
             const target = books.entries.find(x => x.id === id);
             Object.assign(target, entry, { updatedAt: Date.now() });
             delete target.sample;
@@ -884,21 +904,22 @@ function findTable(wb) {
             const map = mapHeader(rows[r]);
             if (!('date' in map) || !('amount' in map || 'income' in map || 'expense' in map)) continue;
             const score = Object.keys(map).length * 1000 + rows.length - r;
-            if (!best || score > best.score) best = { name, header: rows[r].map(h => String(h).trim()), rows: rows.slice(r + 1), map, score };
+            if (!best || score > best.score) best = { name, header: rows[r].map(h => String(h).trim()), rows: rows.slice(r + 1), map, score, date1904: !!wb.Workbook?.WBProps?.date1904 };
         }
         if (best && name === 'Entries') break;
     }
     return best;
 }
 
-// Whole words only, so "Marketing" isn't "in" and "Payment received" isn't "payment".
-// Income is checked first so "Expense reimbursement" counts as money in. Anything
+// Whole words only, so "Marketing" isn't "in", and a "credit card" isn't a credit. Text that
+// points both ways is no answer, except that "Expense reimbursement" counts as money in. Anything
 // unrecognized returns null and the amount's sign and category decide instead.
 function typeFromText(s) {
     s = String(s ?? '').toLowerCase();
-    if (/\b(in|income|revenue|credit|deposit|received|receipts?|reimburse\w*|sales?|invoice)\b/.test(s)) return 'income';
-    if (/\b(out|expenses?|expenditures?|debit|costs?|spent|purchases?|withdrawals?)\b/.test(s)) return 'expense';
-    return null;
+    if (/\breimburse/.test(s)) return 'income';
+    const income = /\b(in|income|revenue|credit(?! card)|deposit|received|receipts?|sales?|invoice)\b/.test(s);
+    const expense = /\b(out|expenses?|expenditures?|debit|costs?|spent|purchases?|withdrawals?)\b/.test(s);
+    return income === expense ? null : income ? 'income' : 'expense';
 }
 
 function parseTable(table) {
@@ -914,13 +935,23 @@ function parseTable(table) {
         if (e.description) learned.set(`${e.type}|d|${e.description.toLowerCase()}`, e.category);
         if (e.party) learned.set(`${e.type}|p|${e.party.toLowerCase()}`, e.category);
     }
+    // "travel" files under your "Travel" rather than starting a second P&L line
+    const spelling = { income: new Map(), expense: new Map() };
+    for (const t of ['income', 'expense']) for (const c of books.categories[t]) spelling[t].set(c.toLowerCase(), c);
+    const sameCase = (t, c) => {
+        if (!c) return c;
+        if (!spelling[t].has(c.toLowerCase())) spelling[t].set(c.toLowerCase(), c);
+        return spelling[t].get(c.toLowerCase());
+    };
     const entries = [], skipped = [], transfers = [];
     let guessed = 0;
     // Left-out rows are kept so the preview can show them; a row that's only blanks isn't worth it
     const skip = row => { const cells = row.map(v => String(v ?? '').trim()).filter(Boolean); if (cells.length) skipped.push(cells.join(' · ')); };
 
     for (const row of rows) {
-        const date = parseDate(cell(row, 'date'));
+        // Old Mac workbooks count days from 1904, 1,462 days after Excel's usual start
+        const rawDate = cell(row, 'date');
+        const date = parseDate(typeof rawDate === 'number' && table.date1904 ? rawDate + 1462 : rawDate);
         let type = null, cents = NaN;
         if (!date) {
             skip(row);
@@ -936,7 +967,8 @@ function parseTable(table) {
         }
         if ('amount' in map) {
             cents = parseMoney(cell(row, 'amount'));
-            type = 'type' in map ? typeFromText(cell(row, 'type')) : null;
+            // A negative amount is money out whatever the Type says (a card's "Sale" isn't income)
+            type = cents < 0 ? 'expense' : 'type' in map ? typeFromText(cell(row, 'type')) : null;
             if (!type && Number.isFinite(cents)) {
                 const cat = text(row, 'category').toLowerCase();
                 type = cents < 0 ? 'expense' : known.income.has(cat) ? 'income' : known.expense.has(cat) ? 'expense' : null;
@@ -957,7 +989,7 @@ function parseTable(table) {
             id: id || uid(),
             date, type,
             amount: Math.abs(cents),
-            category: text(row, 'category') || learned.get(`${type}|d|${description.toLowerCase()}`)
+            category: sameCase(type, text(row, 'category')) || learned.get(`${type}|d|${description.toLowerCase()}`)
                 || learned.get(`${type}|p|${party.toLowerCase()}`) || FALLBACK[type],
             party,
             description,
@@ -1032,7 +1064,7 @@ function leftOutHTML({ dupes, transfers, skipped, bank }) {
             transfers.map(t => line(t.date, t.description || 'Transfer', `${t.from} → ${t.to}`,
                 Number.isFinite(t.cents) ? signed(t.cents < 0 ? 'expense' : 'income', Math.abs(t.cents)) : '')).join('')),
         skipped.length && section(skipped.length, plural(skipped.length, 'row'),
-            'Fieldbook couldn’t find both a date and an amount (like totals or notes).',
+            'Fieldbook couldn’t read both a date and an amount in it (like totals or notes).',
             skipped.map(s => `<tr><td colspan="3">${esc(s)}</td></tr>`).join(''))
     ].filter(Boolean).join('');
 }
@@ -1058,7 +1090,7 @@ async function importFile(file) {
     const backup = readBackupExtras(wb);
     if (backup && table.header.includes('ID')) table.map.id = table.header.indexOf('ID'); // backups carry their IDs
     const { entries, skipped, guessed, transfers } = parseTable(table);
-    if (!entries.length && !transfers.length) {
+    if (!entries.length && (backup || !transfers.length)) {
         return ask({ title: 'No entries found', body: `<p>The sheet “${esc(table.name)}” has the right columns, but no rows with both a date and an amount.</p>`, actions: [['OK', 'ok', 'btn-primary']] });
     }
     if (backup) return restoreBackup(entries, backup, file.name);
@@ -1298,8 +1330,8 @@ function loadSample() {
         if (rand() > 0.55) on(22, 'expense', 18 + Math.round(rand() * 90), 'Office & supplies', 'Staples', 'Printer paper & toner');
         if (rand() > 0.8) on(24, 'income', 180 + Math.round(rand() * 300), 'Expense reimbursements', pick(clients), 'Travel reimbursement');
     }
+    filters.year = String(now.getFullYear()); // before change() renders, so the list and summary agree
     change('Sample entries added. Clear them any time.', () => { books.entries.push(...list); }, { counts: 0 });
-    filters.year = String(now.getFullYear());
 }
 
 $('#clear-sample').addEventListener('click', () => {
@@ -1316,7 +1348,9 @@ function ask({ title, body, actions }) {
         actions.map(([label, value, cls = '']) => `<button class="btn ${cls}" value="${value}">${esc(label)}</button>`).join('');
     askDialog.returnValue = '';
     askDialog.showModal();
-    $('[data-actions] .btn:last-child', askDialog).focus();
+    // Enter takes the main action, unless that destroys something: then it's Cancel
+    const main = $('[data-actions] .btn:last-child', askDialog);
+    (main.className.includes('danger') ? $('[data-actions] .btn[value="cancel"]', askDialog) ?? main : main).focus();
     return new Promise(resolve => askDialog.addEventListener('close', () => resolve(askDialog.returnValue), { once: true }));
 }
 
