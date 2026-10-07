@@ -845,14 +845,20 @@ $('#download-backup').addEventListener('click', downloadBackup);
 
 const HEADERS = [
     ['date', /^(date|day|when|posted|trans(action)?\.? date|posting date|invoice date|date paid|paid on)$|\bdate\b/],
-    ['type', /^(type|kind|in\s*\/\s*out|income\s*\/\s*expense|direction|money in\/out|debit\/credit)$/],
+    ['type', /^(type|kind|trans(action)?\.? type|in\s*\/\s*out|income\s*\/\s*expense|direction|money in\/out|debit\/credit)$/],
     ['category', /categ|^account$|^class$|^group$|^bucket$|^line item$|^(expense|income) type$/],
     ['party', /client|customer|payee|payer|vendor|merchant|supplier|company|^who$|^name$|paid to|received from|from\s*\/\s*to/],
     ['description', /desc|memo|detail|^item|note|particular|purpose|^what|narrative|^reference|^for$/],
     // Income and expense come before amount so "Debit amount" / "Credit amount" land in the right column
     ['income', /income|received|revenue|deposit|credit|money in|\bin$|^fees?$|receipts/],
     ['expense', /expense|expenditure|spent|spend|debit|payment|^paid$|cost|money out|\bout$|withdrawal/],
-    ['amount', /amount|^amt|^total$|^value$|^sum$|^\$$|^usd$|^net$/]
+    ['amount', /amount|^amt|^total$|^value$|^sum$|^\$$|^usd$|^net$/],
+    // A second note column (bank exports have Description and Memo), added to the description
+    ['memo', /^(memo|notes?|comments?)$/],
+    // Bank exports: a running balance, and the two sides of a transfer between your own accounts
+    ['balance', /^(running )?balance$/],
+    ['from', /^from account( name)?$/],
+    ['to', /^to account( name)?$/]
 ];
 const MONEY_KEYS = ['income', 'expense', 'amount'];
 // Headers like "Payment method" or "Cost center" describe money but don't hold it
@@ -900,14 +906,32 @@ function parseTable(table) {
     const cell = (row, key) => key in map ? row[map[key]] : '';
     const text = (row, key) => String(cell(row, key) ?? '').trim();
     const known = { income: new Set(books.categories.income.map(c => c.toLowerCase())), expense: new Set(books.categories.expense.map(c => c.toLowerCase())) };
-    const entries = [];
-    let skipped = 0, guessed = 0;
+    // Rows without a category get the one last used for the same description or client,
+    // as the entry form does (so a bank's "Interest Paid" lands where you filed it before)
+    const learned = new Map();
+    for (const e of [...books.entries].sort(byNewest).reverse()) {
+        if (!books.categories[e.type].includes(e.category)) continue;
+        if (e.description) learned.set(`${e.type}|d|${e.description.toLowerCase()}`, e.category);
+        if (e.party) learned.set(`${e.type}|p|${e.party.toLowerCase()}`, e.category);
+    }
+    const entries = [], skipped = [], transfers = [];
+    let guessed = 0;
+    // Left-out rows are kept so the preview can show them; a row that's only blanks isn't worth it
+    const skip = row => { const cells = row.map(v => String(v ?? '').trim()).filter(Boolean); if (cells.length) skipped.push(cells.join(' · ')); };
 
     for (const row of rows) {
         const date = parseDate(cell(row, 'date'));
         let type = null, cents = NaN;
         if (!date) {
-            if (row.some(v => String(v).trim())) skipped++;
+            skip(row);
+            continue;
+        }
+        const party = text(row, 'party'), memo = text(row, 'memo');
+        let description = text(row, 'description');
+        if (memo && memo.toLowerCase() !== description.toLowerCase()) description = description ? `${description} — ${memo}` : memo;
+        // Money moved between your own accounts (owner draws, savings) isn't income or an expense
+        if (text(row, 'from') && text(row, 'to')) {
+            transfers.push({ date, cents: parseMoney(cell(row, 'amount')), description, from: text(row, 'from'), to: text(row, 'to') });
             continue;
         }
         if ('amount' in map) {
@@ -925,7 +949,7 @@ function parseTable(table) {
             else if (Math.abs(exp) > 0) { type = 'expense'; cents = exp; }
         }
         if (!date || !type || !(Math.abs(cents) > 0)) {
-            if (row.some(v => String(v).trim())) skipped++;
+            skip(row);
             continue;
         }
         const id = String(cell(row, 'id') ?? '');
@@ -933,13 +957,14 @@ function parseTable(table) {
             id: id || uid(),
             date, type,
             amount: Math.abs(cents),
-            category: text(row, 'category') || FALLBACK[type],
-            party: text(row, 'party'),
-            description: text(row, 'description'),
+            category: text(row, 'category') || learned.get(`${type}|d|${description.toLowerCase()}`)
+                || learned.get(`${type}|p|${party.toLowerCase()}`) || FALLBACK[type],
+            party,
+            description,
             createdAt: Date.now()
         });
     }
-    return { entries, skipped, guessed };
+    return { entries, skipped, guessed, transfers };
 }
 
 function readBackupExtras(wb) {
@@ -957,6 +982,60 @@ function readBackupExtras(wb) {
 }
 
 const dupKey = e => [e.date, e.type, e.amount, e.description.toLowerCase(), e.party.toLowerCase()].join('|');
+// A bank posts a day or few after you'd write an entry down, and words it differently
+const NEAR_DAYS = 4;
+const dayNumber = iso => Date.UTC(yearOf(iso), monthOf(iso) - 1, +iso.slice(8, 10)) / 86400000;
+
+// Splits rows into fresh ones and dupes ({ row, match }) of entries already in the books.
+// Each entry in the books matches at most one row, so re-importing a file adds nothing but
+// two identical rows (two $18 lunches on one day) still both come in. A spreadsheet row
+// matches on everything; a bank row matches the same amount and direction within
+// NEAR_DAYS, the closest date first.
+function matchBooks(entries, { bank }) {
+    const keyOf = e => bank ? `${e.type}|${e.amount}` : dupKey(e);
+    const pool = new Map();
+    for (const e of books.entries) {
+        if (e.sample) continue; // they go when real entries arrive
+        pool.has(keyOf(e)) ? pool.get(keyOf(e)).push(e) : pool.set(keyOf(e), [e]);
+    }
+    const fresh = [], dupes = [];
+    for (const row of entries) {
+        const candidates = pool.get(keyOf(row)) ?? [], day = dayNumber(row.date);
+        const gap = e => Math.abs(dayNumber(e.date) - day);
+        let best = -1;
+        candidates.forEach((e, i) => {
+            if (gap(e) <= (bank ? NEAR_DAYS : 0) && (best < 0 || gap(e) < gap(candidates[best]))) best = i;
+        });
+        if (best < 0) fresh.push(row);
+        else dupes.push({ row, match: candidates.splice(best, 1)[0] });
+    }
+    return { fresh, dupes };
+}
+
+// One collapsible list per reason rows are left out, so nothing disappears unexplained
+function leftOutHTML({ dupes, transfers, skipped, bank }) {
+    const signed = (type, cents) => `${type === 'income' ? '+' : '−'}${money(cents)}`;
+    const line = (date, main, sub, amount) => `<tr><td class="when">${prettyDate(date)}</td>
+        <td>${esc(main)}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</td><td class="num">${amount}</td></tr>`;
+    const section = (count, what, why, rows) => `<details class="left-out"${count <= 5 ? ' open' : ''}>
+        <summary><strong>${what}</strong> will be left out: ${why}</summary>
+        <div class="scroll"><table class="table">${rows}</table></div></details>`;
+    return [
+        dupes.length && section(dupes.length, plural(dupes.length, 'row'),
+            `${dupes.length === 1 ? 'it matches' : 'each matches'} an entry already in your books ` +
+                (bank ? `(the same amount, dated within ${NEAR_DAYS} days).` : '(the same date, amount, description and client).'),
+            dupes.map(({ row, match }) => line(row.date, row.description || row.party || row.category,
+                `Already in as ${prettyDate(match.date)}${match.description || match.party ? ` “${match.description || match.party}”` : ''}`,
+                signed(row.type, row.amount))).join('')),
+        transfers.length && section(transfers.length, plural(transfers.length, 'transfer'),
+            'money moved between your own accounts (like owner draws or savings) isn’t income or an expense.',
+            transfers.map(t => line(t.date, t.description || 'Transfer', `${t.from} → ${t.to}`,
+                Number.isFinite(t.cents) ? signed(t.cents < 0 ? 'expense' : 'income', Math.abs(t.cents)) : '')).join('')),
+        skipped.length && section(skipped.length, plural(skipped.length, 'row'),
+            'Fieldbook couldn’t find both a date and an amount (like totals or notes).',
+            skipped.map(s => `<tr><td colspan="3">${esc(s)}</td></tr>`).join(''))
+    ].filter(Boolean).join('');
+}
 
 async function importFile(file) {
     let wb;
@@ -978,12 +1057,14 @@ async function importFile(file) {
     }
     const backup = readBackupExtras(wb);
     if (backup && table.header.includes('ID')) table.map.id = table.header.indexOf('ID'); // backups carry their IDs
-    const { entries, skipped, guessed } = parseTable(table);
-    if (!entries.length) {
+    const { entries, skipped, guessed, transfers } = parseTable(table);
+    if (!entries.length && !transfers.length) {
         return ask({ title: 'No entries found', body: `<p>The sheet “${esc(table.name)}” has the right columns, but no rows with both a date and an amount.</p>`, actions: [['OK', 'ok', 'btn-primary']] });
     }
     if (backup) return restoreBackup(entries, backup, file.name);
-    return importEntries(entries, { skipped, guessed, sheetName: table.name, fileName: file.name });
+    // A running balance or transfer columns mean a bank export, not your own records
+    const bank = ['balance', 'from', 'to'].some(k => k in table.map);
+    return importEntries(entries, { skipped, guessed, transfers, bank, sheetName: table.name, fileName: file.name });
 }
 
 function describe(list) {
@@ -1029,31 +1110,26 @@ async function restoreBackup(entries, backup, fileName) {
     render();
 }
 
-async function importEntries(entries, { skipped, guessed, sheetName, fileName }) {
-    // Each entry already in the books matches one row, so re-importing a file adds nothing
-    // but two identical rows (two $18 lunches on one day) still both come in
-    const existing = new Map();
-    for (const e of books.entries) existing.set(dupKey(e), (existing.get(dupKey(e)) || 0) + 1);
-    const fresh = entries.filter(e => {
-        const k = dupKey(e), n = existing.get(k) || 0;
-        if (n) existing.set(k, n - 1);
-        return !n;
-    });
-    const dupes = entries.length - fresh.length;
+async function importEntries(entries, { skipped, guessed, transfers, bank, sheetName, fileName }) {
+    const { fresh, dupes } = matchBooks(entries, { bank });
+    const leftOut = leftOutHTML({ dupes, transfers, skipped, bank });
     const newCats = type => [...new Set(fresh.filter(e => e.type === type).map(e => e.category))].filter(c => !books.categories[type].includes(c));
     const added = [...newCats('income'), ...newCats('expense')];
     const sampleRows = fresh.slice(0, 4).map(e => `<tr><td>${prettyDate(e.date)}</td><td>${esc(e.description || e.party || '')}</td><td>${esc(e.category)}</td><td class="num">${e.type === 'income' ? '+' : '−'}${money(e.amount)}</td></tr>`).join('');
 
     if (!fresh.length) {
-        return ask({ title: 'Already in your books', body: `<p>All ${plural(entries.length, 'entry', 'entries')} in “${esc(fileName)}” are already in Fieldbook, so there’s nothing new to add.</p>`, actions: [['OK', 'ok', 'btn-primary']] });
+        return ask({
+            title: entries.length ? 'Already in your books' : 'Nothing to add',
+            body: `<p>${entries.length ? `Everything in “${esc(fileName)}” is already in Fieldbook` : `Nothing in “${esc(fileName)}” is income or an expense`}, so there’s nothing new to add.</p>${leftOut}`,
+            actions: [['OK', 'ok', 'btn-primary']]
+        });
     }
 
     const choice = await ask({
         title: `Add ${plural(fresh.length, 'entry', 'entries')}?`,
         body: `<p>From the sheet “${esc(sheetName)}” in “${esc(fileName)}”:</p>${describe(fresh)}
             <table class="table" style="margin:12px 0">${sampleRows}</table>
-            ${dupes ? `<p>${plural(dupes, 'row')} already in your books will be left out.</p>` : ''}
-            ${skipped ? `<p>${plural(skipped, 'row')} without a date or amount (like totals or notes) will be left out.</p>` : ''}
+            ${leftOut}
             ${guessed ? `<p class="warn">${plural(guessed, 'row')} with a positive amount ${guessed === 1 ? 'has' : 'have'} no type Fieldbook recognizes, so ${guessed === 1 ? 'it' : 'they'} will count as money in (negative amounts count as money out). If that’s wrong, cancel, add a Type column (“in” or “out”), and import again.</p>` : ''}
             ${added.length ? `<p>New categories will be added: ${added.map(esc).join(', ')}.</p>` : ''}
             <p class="muted">You can undo this right after.</p>`,

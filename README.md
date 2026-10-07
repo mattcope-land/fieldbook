@@ -27,6 +27,13 @@ for sites you haven't opened in a while. So backups are the safety net:
   either an *Amount* column or separate *Income* and *Expense* columns, and adds those
   rows. Before changing anything it shows a preview and skips rows that are already in
   the books.
+- **Bank exports** (a CSV with *Posted Date*, *Description*, *Amount*, *Balance*,
+  *Transaction Type* and *Memo*, plus *From/To Account Name* for transfers) import the
+  same way. *Transaction Type* (credit/debit) decides money in or out, the memo is added to
+  the description, and transfers between your own accounts (owner draws, moves to savings)
+  are left out because they aren't income or expenses. A bank row counts as already in the
+  books when an entry has the same amount and direction within 4 days, so overlapping
+  downloads and entries you typed in yourself aren't doubled up.
 
 Amounts are stored as whole cents and dates as `YYYY-MM-DD` strings. Keep changes to the
 stored shape backward compatible.
